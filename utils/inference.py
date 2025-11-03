@@ -82,7 +82,8 @@ def process_image(image_path, model_path, class_names, class_names_full, conf_th
             if label_y < 0:   # nếu tràn ra ngoài ảnh
                 label_y = y1 + 30   # vẽ xuống dưới
             img = draw_text_unicode(img, label, (x1, y1-30), color=color, used_rects=used_rects)
-            return img, detected_codes
+    
+    return img, detected_codes
 
 def process_video(
     video_path,

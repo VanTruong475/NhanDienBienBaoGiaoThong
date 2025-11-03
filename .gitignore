@@ -1,1 +1,49 @@
-venv
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Virtual Environment
+venv/
+env/
+ENV/
+.venv
+
+# Streamlit
+.streamlit/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Project specific - Generated/Temporary files
+temp_image.jpg
+temp_video.mp4
+*.tmp
+
+# Project specific - User data (có thể giữ hoặc xóa tùy ý)
+data/traffic_signs.db
+captured_images/
+recorded_videos/
+output/
+
+# Logs
+*.log
+
+# Jupyter Notebook
+.ipynb_checkpoints/
+
+# Distribution / packaging
+dist/
+build/
+*.egg-info/
