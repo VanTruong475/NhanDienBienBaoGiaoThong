@@ -361,22 +361,11 @@ Contributions are welcome! Please:
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
-## 👥 Authors
-
-- **Your Name** - *Initial work*
-
 ## 🙏 Acknowledgments
 
 - [Ultralytics YOLOv8](https://github.com/ultralytics/ultralytics) - Object detection
 - [Streamlit](https://streamlit.io/) - Web framework
 - Vietnamese Traffic Sign Dataset - Training data
-
-## 📧 Contact
-
-- Email: your.email@example.com
-- GitHub: [@yourusername](https://github.com/yourusername)
-- Project: [https://github.com/yourusername/NhanDienBienBaoGiaoThong](https://github.com/yourusername/NhanDienBienBaoGiaoThong)
-
 ---
 
 ⭐ **Nếu project này hữu ích, hãy cho một Star!** ⭐
