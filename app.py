@@ -321,7 +321,7 @@ with tab2:
                         conf_threshold=conf_threshold,
                     )
                 
-                st.image(result_img, channels="BGR", caption="Kết quả nhận diện", width="stretch")
+                st.image(result_img, channels="BGR", caption="Kết quả nhận diện", use_column_width=True)
                 
                 # Lưu vào database với confidence thực tế từ YOLO
                 if detected_detections:
@@ -406,27 +406,24 @@ with tab3:
         # Control buttons
         col_btn1, col_btn2, col_btn3 = st.columns(3)
         with col_btn1:
-            start_btn =             st.button(
+            start_btn = st.button(
                 "▶️ Bắt đầu xử lý", 
                 disabled=st.session_state.video_processing, 
-                key="start_video_btn",
-                width="stretch"
+                key="start_video_btn"
             )
         
         with col_btn2:
             stop_btn = st.button(
                 "⏹️ Dừng xử lý", 
                 disabled=not st.session_state.video_processing, 
-                key="stop_video_btn",
-                width="stretch"
+                key="stop_video_btn"
             )
         
         with col_btn3:
             if st.session_state.video_statistics:
                 clear_btn = st.button(
                     "🗑️ Xóa kết quả",
-                    key="clear_results_btn",
-                    width="stretch"
+                    key="clear_results_btn"
                 )
                 if clear_btn:
                     st.session_state.video_statistics = None
@@ -816,7 +813,7 @@ with tab4:
                     cv2.putText(processed_frame_rgb, "REC", (50, 40), 
                                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 0, 0), 2)
                 
-                video_placeholder.image(processed_frame_rgb, channels="RGB", width="stretch")
+                video_placeholder.image(processed_frame_rgb, channels="RGB", use_column_width=True)
                 
                 # Display detected signs and play alerts
                 with detected_list_placeholder.container():
@@ -872,7 +869,7 @@ with tab4:
         for idx, img_path in enumerate(st.session_state.captured_images[-8:]):  # Show last 8
             with cols[idx % 4]:
                 if os.path.exists(img_path):
-                    st.image(img_path, caption=os.path.basename(img_path), width="stretch")
+                    st.image(img_path, caption=os.path.basename(img_path), use_column_width=True)
 
 # Footer
 st.markdown("---")
