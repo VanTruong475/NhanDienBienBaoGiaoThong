@@ -1,8 +1,10 @@
 import cv2
 import numpy as np
 from ultralytics import YOLO
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw
 import os
+from utils.model_cache import get_optimized_model, get_inference_config
+from utils.font_utils import get_cached_font
 
 def rects_overlap(rect1, rect2):
     # rect: (x, y, w, h)
@@ -11,30 +13,26 @@ def rects_overlap(rect1, rect2):
     return not (x1 + w1 < x2 or x2 + w2 < x1 or y1 + h1 < y2 or y2 + h2 < y1)
 
 def get_font(font_size=24):
-    arial_path = r'C:\Windows\Fonts\arial.ttf'
-    times_path = r'C:\Windows\Fonts\times.ttf'
-    if os.path.exists(arial_path):
-        return ImageFont.truetype(arial_path, font_size)
-    elif os.path.exists(times_path):
-        return ImageFont.truetype(times_path, font_size)
-    else:
-        return ImageFont.load_default()
+    """Get cross-platform font"""
+    return get_cached_font(font_size)
 
 def draw_text_unicode(img, text, position, color=(255,255,255), font_size=24, used_rects=None):
     img_pil = Image.fromarray(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
     draw = ImageDraw.Draw(img_pil)
     font = get_font(font_size)
-    x, y = position
+    x, y = int(position[0]), int(position[1])
     # Lấy kích thước vùng chữ
     bbox = draw.textbbox((x, y), text, font=font)
-    text_w = bbox[2] - bbox[0]
-    text_h = bbox[3] - bbox[1]
+    text_w = int(bbox[2] - bbox[0])
+    text_h = int(bbox[3] - bbox[1])
     # Điều chỉnh vị trí để tránh hiển thị ra ngoài khung ảnh
     img_h, img_w = img.shape[:2]
     if x + text_w > img_w:
-        x = img_w - text_w
+        x = max(0, img_w - text_w)
     if y + text_h > img_h:
-        y = img_h - text_h
+        y = max(0, img_h - text_h)
+    x = max(0, x)  # Ensure x is not negative
+    y = max(0, y)  # Ensure y is not negative
     rect = (x, y, text_w, text_h)
     # Tránh ghi đè chữ
     if used_rects is not None:
@@ -51,11 +49,16 @@ def draw_text_unicode(img, text, position, color=(255,255,255), font_size=24, us
     return cv2.cvtColor(np.array(img_pil), cv2.COLOR_RGB2BGR)
 
 def process_image(image_path, model_path, class_names, class_names_full, conf_threshold=0.5):
-    model = YOLO(model_path)
+    # Use cached and optimized model
+    model = get_optimized_model(model_path)
+    inference_config = get_inference_config()
+    
     img = cv2.imread(image_path)
     if img is None:
         raise ValueError(f"Không thể đọc ảnh từ {image_path}")
-    results = model(img, conf=conf_threshold)
+    
+    # Run inference with optimized settings
+    results = model(img, conf=conf_threshold, **inference_config)
     colors = [
         (0, 255, 0),   # Xanh lá
         (0, 0, 255),   # Đỏ
@@ -66,14 +69,26 @@ def process_image(image_path, model_path, class_names, class_names_full, conf_th
         (128, 0, 128)  # Tím
     ]
     detected_codes = []
+    detected_detections = []  # Store code + confidence
     used_rects = []
     for result in results:
         for idx, box in enumerate(result.boxes):
             x1, y1, x2, y2 = map(int, box.xyxy[0])
-            conf = box.conf[0]
+            conf = float(box.conf[0])  # Get actual YOLO confidence
             class_id = int(box.cls[0])
+            
+            # Kiểm tra class_id có hợp lệ không
+            if class_id >= len(class_names):
+                print(f"⚠️  Warning: class_id {class_id} vượt quá số lượng classes ({len(class_names)}). Bỏ qua detection này.")
+                continue
+            
             code = class_names[class_id]
             detected_codes.append(code)
+            # Store detection with actual confidence
+            detected_detections.append({
+                'code': code,
+                'confidence': conf
+            })
             label = f"{code}: {class_names_full.get(code, code)} {conf:.2f}"
             color = colors[idx % len(colors)]
             cv2.rectangle(img, (x1, y1), (x2, y2), color, 2)
@@ -83,7 +98,7 @@ def process_image(image_path, model_path, class_names, class_names_full, conf_th
                 label_y = y1 + 30   # vẽ xuống dưới
             img = draw_text_unicode(img, label, (x1, y1-30), color=color, used_rects=used_rects)
     
-    return img, detected_codes
+    return img, detected_detections
 
 def process_video(
     video_path,

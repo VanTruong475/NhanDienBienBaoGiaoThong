@@ -2,10 +2,12 @@ import streamlit as st
 import cv2
 import os
 import yaml
+import json
 from utils.inference import process_image, process_video
 from utils.webcam_processing import WebcamProcessor
 from utils.database import TrafficSignDatabase
 from utils.audio_alert import AudioAlert
+from utils.path_utils import get_absolute_path, get_data_path, get_model_path, get_output_path, get_temp_path, ensure_dir
 import time
 import threading
 import numpy as np
@@ -64,87 +66,32 @@ st.markdown('<h1 class="main-title">🚦 Hệ Thống Nhận Diện Biển Báo 
 # KHỞI TẠO & CẤU HÌNH
 # ============================================
 
-def get_absolute_path(relative_path):
-    """Lấy đường dẫn tuyệt đối"""
-    return os.path.abspath(os.path.join(os.path.dirname(__file__), relative_path))
+# Note: get_absolute_path is now imported from utils.path_utils
 
 # Đọc cấu hình dataset
 try:
-    with open(get_absolute_path("./data/data.yaml"), "r") as f:
+    with open(get_data_path("data.yaml"), "r", encoding="utf-8") as f:
         data_config = yaml.safe_load(f)
     class_names = data_config["names"]
 except FileNotFoundError:
     st.error("❌ Không tìm thấy file data.yaml. Vui lòng kiểm tra thư mục data/")
     st.stop()
 
-# Dictionary ánh xạ mã biển báo sang tên đầy đủ
-class_names_full = {
-    "DP.135": "Hết tất cả các lệnh cấm",
-    "P.102": "Cấm đi ngược chiều",
-    "P.103a": "Cấm ô tô",
-    "P.103b": "Cấm ô tô rẽ phải",
-    "P.103c": "Cấm ô tô rẽ trái",
-    "P.104": "Cấm mô tô",
-    "P.106a": "Cấm xe tải",
-    "P.106b": "Cấm xe tải trên 2,5 tấn",
-    "P.107a": "Cấm ô tô khách và ô tô tải",
-    "P.112": "Cấm người đi bộ",
-    "P.115": "Hạn chế trọng lượng xe",
-    "P.117": "Hạn chế chiều cao",
-    "P.123a": "Cấm rẽ trái",
-    "P.123b": "Cấm rẽ phải",
-    "P.124a": "Cấm quay đầu",
-    "P.124b": "Cấm ô tô quay đầu",
-    "P.124c": "Cấm rẽ trái và quay đầu",
-    "P.125": "Cấm vượt",
-    "P.127": "Tốc độ tối đa cho phép",
-    "P.128": "Cấm bóp còi",
-    "P.130": "Cấm dừng và đỗ xe",
-    "P.131a": "Cấm đỗ xe",
-    "P.137": "Cấm đi thẳng và rẽ trái",
-    "P.245a": "Cấm xe đạp",
-    "R.301c": "Hướng đi thẳng phải theo",
-    "R.301d": "Các xe chỉ được phép rẽ phải",
-    "R.301e": "Các xe chỉ được phép rẽ trái",
-    "R.302a": "Chỉ hướng đi phải theo vòng chướng ngại vật",
-    "R.302b": "Chỉ hướng đi trái theo vòng chướng ngại vật",
-    "R.303": "Giao nhau chạy theo vòng xuyến",
-    "R.407a": "Đường 1 chiều",
-    "R.409": "Chỗ quay xe",
-    "R.425": "Bệnh viện",
-    "R.434": "Bến xe buýt",
-    "S.509a": "Chỗ đường sắt cắt đường bộ",
-    "W.201a": "Chỗ ngặt nguy hiểm",
-    "W.201b": "Chỗ ngặt nguy hiểm",
-    "W.202a": "Nhiều chỗ ngoặt nguy hiểm liên tiếp",
-    "W.202b": "Nhiều chỗ ngoặt nguy hiểm liên tiếp",
-    "W.203b": "Đường bị hẹp bên trái",
-    "W.203c": "Đường hẹp bên trái",
-    "W.205a": "Đường hẹp bên phải",
-    "W.205b": "Nơi giao nhau của đường cùng cấp",
-    "W.205d": "Nơi giao nhau của đường cùng cấp",
-    "W.207a": "Giao nhau với đường không ưu tiên",
-    "W.207b": "Giao nhau với đường không ưu tiên",
-    "W.207c": "Giao nhau với đường không ưu tiên",
-    "W.208": "Giao nhau với đường ưu tiên",
-    "W.209": "Giao nhau có tín hiệu đèn",
-    "W.210": "Giao nhau với đường sắt có rào chắn",
-    "W.219": "Dốc xuống nguy hiểm",
-    "W.221b": "Đường không bằng phẳng",
-    "W.224": "Người đi bộ cắt ngang",
-    "W.225": "Trẻ em",
-    "W.227": "Công trường",
-    "W.233": "Nguy hiểm khắc",
-    "W.235": "Đường đôi",
-    "W.245a": "Chú ý chướng ngại vật phía trước"
-}
+# Đọc tên đầy đủ biển báo từ JSON file
+try:
+    with open(get_data_path("sign_labels_vi.json"), "r", encoding="utf-8") as f:
+        class_names_full = json.load(f)
+except FileNotFoundError:
+    st.error("❌ Không tìm thấy file sign_labels_vi.json. Vui lòng kiểm tra thư mục data/")
+    st.stop()
 
 # Khởi tạo Database và Audio Alert
 if 'database' not in st.session_state:
-    st.session_state.database = TrafficSignDatabase(get_absolute_path("data/traffic_signs.db"))
+    st.session_state.database = TrafficSignDatabase(get_data_path("traffic_signs.db"))
 
 if 'audio_alert' not in st.session_state:
-    st.session_state.audio_alert = AudioAlert()
+    # Initialize with audio disabled by default (user can enable via checkbox)
+    st.session_state.audio_alert = AudioAlert(enabled=False)
 
 db = st.session_state.database
 audio = st.session_state.audio_alert
@@ -156,19 +103,42 @@ audio = st.session_state.audio_alert
 st.sidebar.header("⚙️ Cài đặt")
 
 # Model settings
-model_path = get_absolute_path("runs/train/exp/weights/best.pt")
+model_path = get_model_path("best.pt")
 if not os.path.exists(model_path):
-    st.sidebar.error(f"❌ Không tìm thấy model!")
+    st.sidebar.error(f"❌ Không tìm thấy model tại: {model_path}")
     st.stop()
 else:
-    st.sidebar.success("✅ Model đã sẵn sàng!")
+    st.sidebar.success(f"✅ Model: {os.path.basename(model_path)}")
 
 conf_threshold = st.sidebar.slider("Ngưỡng độ tin cậy", 0.0, 1.0, 0.5, 0.05)
+
+# Performance settings
+st.sidebar.markdown("---")
+st.sidebar.subheader("⚡ Tối Ưu Hiệu Năng")
+skip_frames = st.sidebar.slider(
+    "Skip Frames (càng cao càng nhanh)", 
+    0, 5, 2, 
+    help="Số frames bỏ qua giữa mỗi lần nhận diện. 0=xử lý mọi frame, 2=xử lý mỗi frame thứ 3"
+)
+inference_size = st.sidebar.select_slider(
+    "Kích thước Inference",
+    options=[320, 416, 640, 1280],
+    value=640,
+    help="Kích thước ảnh cho inference. Nhỏ hơn = nhanh hơn nhưng ít chính xác hơn"
+)
 
 # Audio settings
 st.sidebar.markdown("---")
 st.sidebar.subheader("🔊 Cảnh Báo Âm Thanh")
-audio_enabled = st.sidebar.checkbox("Bật cảnh báo âm thanh", value=audio.enabled)
+
+# Show audio backend info
+if audio.is_available():
+    st.sidebar.info(f"🔊 Audio: {audio.get_audio_backend()}")
+else:
+    st.sidebar.warning("⚠️  Audio không khả dụng trên hệ thống này")
+
+audio_enabled = st.sidebar.checkbox("Bật cảnh báo âm thanh", value=audio.enabled, 
+                                    disabled=not audio.is_available())
 if audio_enabled != audio.enabled:
     if audio_enabled:
         audio.enable()
@@ -304,12 +274,13 @@ with tab1:
         
         # Export button
         if st.button("📥 Export dữ liệu ra CSV"):
-            csv_path = db.export_to_csv(get_absolute_path("export_detections.csv"))
+            export_path = get_output_path(f"export_detections_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv")
+            csv_path = db.export_to_csv(export_path)
             with open(csv_path, 'rb') as f:
                 st.download_button(
                     label="⬇️ Tải file CSV",
                     data=f.read(),
-                    file_name=f"traffic_signs_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                    file_name=os.path.basename(export_path),
                     mime="text/csv"
                 )
             st.success(f"✅ Đã export {len(recent)} records!")
@@ -332,14 +303,17 @@ with tab2:
     if uploaded_image is not None:
         col1, col2 = st.columns([2, 1])
         
+        # Initialize variable
+        detected_detections = []
+        
         with col1:
             try:
-                temp_image_path = get_absolute_path("temp_image.jpg")
+                temp_image_path = get_temp_path("temp_image.jpg")
                 with open(temp_image_path, "wb") as f:
                     f.write(uploaded_image.read())
                 
                 with st.spinner("🔄 Đang xử lý hình ảnh..."):
-                    result_img, detected_codes = process_image(
+                    result_img, detected_detections = process_image(
                         image_path=temp_image_path,
                         model_path=model_path,
                         class_names=class_names,
@@ -347,15 +321,15 @@ with tab2:
                         conf_threshold=conf_threshold,
                     )
                 
-                st.image(result_img, channels="BGR", caption="Kết quả nhận diện", use_column_width=True)
+                st.image(result_img, channels="BGR", caption="Kết quả nhận diện", width="stretch")
                 
-                # Lưu vào database
-                if detected_codes:
-                    for code in detected_codes:
+                # Lưu vào database với confidence thực tế từ YOLO
+                if detected_detections:
+                    for detection in detected_detections:
                         db.add_detection(
-                            sign_code=code,
-                            sign_name=class_names_full.get(code, code),
-                            confidence=conf_threshold,
+                            sign_code=detection['code'],
+                            sign_name=class_names_full.get(detection['code'], detection['code']),
+                            confidence=detection['confidence'],  # Use actual YOLO confidence
                             source_type="image"
                         )
                 
@@ -365,11 +339,13 @@ with tab2:
                 st.error(f"❌ Lỗi khi xử lý hình ảnh: {str(e)}")
         
         with col2:
-            if detected_codes:
+            if detected_detections:
                 st.subheader("📋 Biển báo phát hiện:")
-                for idx, code in enumerate(detected_codes, 1):
+                for idx, detection in enumerate(detected_detections, 1):
+                    code = detection['code']
+                    conf = detection['confidence']
                     full_name = class_names_full.get(code, code)
-                    st.success(f"**{idx}. {code}**\n\n{full_name}")
+                    st.success(f"**{idx}. {code}** (Conf: {conf:.2%})\n\n{full_name}")
             else:
                 st.info("Không phát hiện biển báo nào")
     else:
@@ -386,6 +362,8 @@ with tab3:
         st.session_state.video_processing = False
     if 'video_stop_flag' not in st.session_state:
         st.session_state.video_stop_flag = threading.Event()
+    if 'video_statistics' not in st.session_state:
+        st.session_state.video_statistics = None
     
     uploaded_video = st.file_uploader(
         "Tải lên video của bạn",
@@ -394,39 +372,98 @@ with tab3:
     )
     
     if uploaded_video is not None:
-        temp_video_path = get_absolute_path("temp_video.mp4")
+        temp_video_path = get_temp_path("temp_video.mp4")
         
         if not os.path.exists(temp_video_path) or st.session_state.get('last_video') != uploaded_video.name:
             with open(temp_video_path, "wb") as f:
                 f.write(uploaded_video.read())
             st.session_state.last_video = uploaded_video.name
+            st.session_state.video_statistics = None  # Reset statistics
         
-        st.subheader("📹 Video gốc:")
-        st.video(uploaded_video)
+        # Layout 2 cột: Video bên trái (nhỏ hơn), Thông tin bên phải
+        col_video, col_info = st.columns([1.5, 1])
+        
+        with col_video:
+            st.subheader("📹 Video gốc")
+            st.video(uploaded_video)
+        
+        with col_info:
+            st.subheader("ℹ️ Thông tin Video")
+            
+            # Hiển thị thông tin cơ bản
+            file_size = len(uploaded_video.getvalue()) / (1024 * 1024)  # MB
+            st.metric("📦 Kích thước", f"{file_size:.1f} MB")
+            st.metric("📄 Tên file", uploaded_video.name)
+            
+            # Instructions
+            st.info("💡 **Hướng dẫn:**\n\n"
+                   "1. Nhấn 'Bắt đầu xử lý'\n"
+                   "2. Đợi quá trình hoàn tất\n"
+                   "3. Xem kết quả bên dưới")
         
         st.markdown("---")
         
-        col1, col2 = st.columns(2)
-        with col1:
-            if st.button("▶️ Bắt đầu xử lý", disabled=st.session_state.video_processing, key="start_video_btn"):
-                st.session_state.video_processing = True
-                st.session_state.video_stop_flag.clear()
+        # Control buttons
+        col_btn1, col_btn2, col_btn3 = st.columns(3)
+        with col_btn1:
+            start_btn =             st.button(
+                "▶️ Bắt đầu xử lý", 
+                disabled=st.session_state.video_processing, 
+                key="start_video_btn",
+                width="stretch"
+            )
         
-        with col2:
-            if st.button("⏹️ Dừng xử lý", disabled=not st.session_state.video_processing, key="stop_video_btn"):
-                st.session_state.video_stop_flag.set()
+        with col_btn2:
+            stop_btn = st.button(
+                "⏹️ Dừng xử lý", 
+                disabled=not st.session_state.video_processing, 
+                key="stop_video_btn",
+                width="stretch"
+            )
+        
+        with col_btn3:
+            if st.session_state.video_statistics:
+                clear_btn = st.button(
+                    "🗑️ Xóa kết quả",
+                    key="clear_results_btn",
+                    width="stretch"
+                )
+                if clear_btn:
+                    st.session_state.video_statistics = None
+                    st.rerun()
+        
+        # Processing
+        if start_btn:
+            st.session_state.video_processing = True
+            st.session_state.video_stop_flag.clear()
+        
+        if stop_btn:
+            st.session_state.video_stop_flag.set()
         
         if st.session_state.video_processing:
-            status_placeholder = st.empty()
-            progress_bar = st.progress(0)
-            progress_text = st.empty()
+            st.markdown("---")
+            
+            # Processing UI
+            col_prog1, col_prog2 = st.columns([2, 1])
+            
+            with col_prog1:
+                status_placeholder = st.empty()
+                progress_bar = st.progress(0)
+                progress_text = st.empty()
+            
+            with col_prog2:
+                signs_counter = st.empty()
             
             status_placeholder.info("⏳ Đang xử lý video...")
             
-            output_path = get_absolute_path("output/output.mp4")
+            output_path = get_output_path("output.mp4")
             
             try:
-                for progress in process_video(
+                unique_signs_count = 0
+                statistics = None
+                
+                # Tạo generator
+                video_generator = process_video(
                     video_path=temp_video_path,
                     model_path=model_path,
                     class_names=class_names,
@@ -434,33 +471,208 @@ with tab3:
                     output_path=output_path,
                     conf_threshold=conf_threshold,
                     stop_flag=st.session_state.video_stop_flag
-                ):
-                    progress_bar.progress(progress / 100)
-                    progress_text.text(f"Tiến độ: {progress:.1f}%")
+                )
+                
+                # Lặp qua progress updates
+                for progress_data in video_generator:
+                    if isinstance(progress_data, tuple):
+                        progress, unique_signs_count = progress_data
+                        
+                        progress_bar.progress(progress / 100)
+                        progress_text.text(f"Tiến độ: {progress:.1f}%")
+                        
+                        with signs_counter.container():
+                            st.metric("🚦 Biển báo tìm thấy", unique_signs_count)
+                    elif isinstance(progress_data, dict):
+                        # Đây là statistics cuối cùng
+                        statistics = progress_data
                 
                 st.session_state.video_processing = False
                 
                 if not st.session_state.video_stop_flag.is_set():
                     status_placeholder.success("✅ Xử lý video hoàn tất!")
                     
-                    st.subheader("🎬 Video đã xử lý:")
-                    if os.path.exists(output_path):
-                        with open(output_path, "rb") as video_file:
-                            video_bytes = video_file.read()
-                            st.video(video_bytes)
-                        
-                        st.download_button(
-                            label="⬇️ Tải xuống video",
-                            data=video_bytes,
-                            file_name="traffic_signs_detected.mp4",
-                            mime="video/mp4"
-                        )
+                    # Lưu statistics
+                    if statistics:
+                        st.session_state.video_statistics = statistics
+                    else:
+                        # Fallback nếu không có statistics
+                        st.session_state.video_statistics = {
+                            'unique_signs': unique_signs_count,
+                            'total_detections': 0,
+                            'detected_signs': {},
+                            'fps': 30,
+                            'video_duration': 0,
+                            'processing_time': 0
+                        }
+                    
+                    st.rerun()
                 else:
                     status_placeholder.warning("⚠️ Đã dừng xử lý video!")
                     
             except Exception as e:
                 st.error(f"❌ Lỗi khi xử lý video: {str(e)}")
+                import traceback
+                st.error(traceback.format_exc())
                 st.session_state.video_processing = False
+        
+        # Hiển thị kết quả sau khi xử lý xong
+        if st.session_state.video_statistics and not st.session_state.video_processing:
+            st.markdown("---")
+            st.subheader("📊 Kết Quả Nhận Diện")
+            
+            stats = st.session_state.video_statistics
+            
+            # Metrics row
+            metric_col1, metric_col2, metric_col3, metric_col4 = st.columns(4)
+            
+            with metric_col1:
+                st.metric(
+                    "🚦 Loại biển báo",
+                    stats.get('unique_signs', 0),
+                    help="Số loại biển báo khác nhau"
+                )
+            
+            with metric_col2:
+                st.metric(
+                    "🎯 Tổng phát hiện",
+                    stats.get('total_detections', 0),
+                    help="Tổng số lần phát hiện biển báo"
+                )
+            
+            with metric_col3:
+                duration = stats.get('video_duration', 0)
+                st.metric(
+                    "⏱️ Thời lượng",
+                    f"{duration:.1f}s",
+                    help="Độ dài video"
+                )
+            
+            with metric_col4:
+                proc_time = stats.get('processing_time', 0)
+                st.metric(
+                    "⚡ Xử lý",
+                    f"{proc_time:.1f}s",
+                    help="Thời gian xử lý"
+                )
+            
+            st.markdown("---")
+            
+            # Video và danh sách biển báo
+            result_col1, result_col2 = st.columns([1.5, 1])
+            
+            with result_col1:
+                st.subheader("🎬 Video đã xử lý")
+                output_path = get_output_path("output.mp4")
+                if os.path.exists(output_path):
+                    with open(output_path, "rb") as video_file:
+                        video_bytes = video_file.read()
+                        st.video(video_bytes)
+                    
+                    st.download_button(
+                        label="⬇️ Tải xuống video",
+                        data=video_bytes,
+                        file_name=f"detected_{uploaded_video.name}",
+                        mime="video/mp4",
+                        width="stretch"
+                    )
+            
+            with result_col2:
+                st.subheader("📋 Biển báo phát hiện")
+                
+                detected_signs = stats.get('detected_signs', {})
+                
+                if detected_signs:
+                    # Sắp xếp theo số lần xuất hiện
+                    sorted_signs = sorted(
+                        detected_signs.items(),
+                        key=lambda x: x[1]['count'],
+                        reverse=True
+                    )
+                    
+                    for idx, (code, info) in enumerate(sorted_signs, 1):
+                        # Tạo box hiển thị rõ ràng với tên đầy đủ
+                        with st.container():
+                            # Header với mã và tên
+                            st.markdown(f"### {idx}. 🚦 **{code}**")
+                            st.markdown(f"**{info['name']}**")
+                            
+                            # Thông tin chi tiết trong columns
+                            col1, col2, col3 = st.columns(3)
+                            with col1:
+                                st.metric("Số lần", f"{info['count']} lần")
+                            with col2:
+                                st.metric("Độ tin cậy", f"{info['max_conf']:.1%}")
+                            with col3:
+                                first_time = info['first_seen'] / stats['fps']
+                                last_time = info['last_seen'] / stats['fps']
+                                duration = last_time - first_time
+                                st.metric("Thời lượng", f"{duration:.1f}s")
+                            
+                            # Thông tin thời gian chi tiết
+                            with st.expander("📊 Chi tiết thời gian", expanded=False):
+                                st.write(f"**⏱️ Xuất hiện lần đầu:** {first_time:.1f}s")
+                                st.write(f"**⏱️ Xuất hiện lần cuối:** {last_time:.1f}s")
+                                st.write(f"**📏 Tổng thời lượng:** {duration:.1f} giây")
+                                st.write(f"**📊 Số lần phát hiện:** {info['count']} lần")
+                            
+                            st.markdown("---")
+                            
+                            # Lưu vào database
+                            db.add_detection(
+                                sign_code=code,
+                                sign_name=info['name'],
+                                confidence=info['max_conf'],
+                                source_type="video"
+                            )
+                else:
+                    st.info("Không phát hiện biển báo nào trong video")
+            
+            # Chi tiết thống kê
+            with st.expander("📈 Bảng Thống Kê Chi Tiết", expanded=False):
+                if detected_signs:
+                    # Sắp xếp theo số lần xuất hiện
+                    sorted_for_table = sorted(
+                        detected_signs.items(),
+                        key=lambda x: x[1]['count'],
+                        reverse=True
+                    )
+                    
+                    df_stats = pd.DataFrame([
+                        {
+                            'STT': idx,
+                            'Mã biển': code,
+                            'Tên đầy đủ': info['name'],
+                            'Số lần': info['count'],
+                            'Độ tin cậy': f"{info['max_conf']:.1%}",
+                            'Bắt đầu (s)': f"{info['first_seen']/stats['fps']:.1f}",
+                            'Kết thúc (s)': f"{info['last_seen']/stats['fps']:.1f}",
+                            'Thời lượng (s)': f"{(info['last_seen'] - info['first_seen'])/stats['fps']:.1f}"
+                        }
+                        for idx, (code, info) in enumerate(sorted_for_table, 1)
+                    ])
+                    
+                    st.dataframe(
+                        df_stats, 
+                        use_container_width=True, 
+                        hide_index=True,
+                        height=400
+                    )
+                    
+                    # Thêm tóm tắt
+                    st.markdown("---")
+                    col_sum1, col_sum2, col_sum3 = st.columns(3)
+                    with col_sum1:
+                        st.metric("📊 Tổng loại", len(detected_signs))
+                    with col_sum2:
+                        total_count = sum(info['count'] for info in detected_signs.values())
+                        st.metric("🎯 Tổng phát hiện", total_count)
+                    with col_sum3:
+                        avg_conf = sum(info['max_conf'] for info in detected_signs.values()) / len(detected_signs)
+                        st.metric("📈 Độ tin cậy TB", f"{avg_conf:.1%}")
+                else:
+                    st.info("Không có dữ liệu")
+    
     else:
         st.info("👆 Vui lòng tải lên video để bắt đầu nhận diện")
 
@@ -493,7 +705,9 @@ with tab4:
                         model_path=model_path,
                         class_names=class_names,
                         class_names_full=class_names_full,
-                        conf_threshold=conf_threshold
+                        conf_threshold=conf_threshold,
+                        skip_frames=skip_frames,
+                        inference_size=inference_size
                     )
                     
                     if st.session_state.webcam_processor.start(camera_id=0):
@@ -536,10 +750,16 @@ with tab4:
     with col2:
         detected_list_placeholder = st.empty()
         fps_placeholder = st.empty()
+        perf_placeholder = st.empty()
     
     # Webcam stream processing
     if st.session_state.webcam_running and st.session_state.webcam_processor is not None:
         try:
+            # Cập nhật settings realtime
+            st.session_state.webcam_processor.set_skip_frames(skip_frames)
+            st.session_state.webcam_processor.set_inference_size(inference_size)
+            st.session_state.webcam_processor.conf_threshold = conf_threshold
+            
             frame_count = 0
             start_time = time.time()
             current_frame = None
@@ -561,9 +781,10 @@ with tab4:
                 
                 # Handle capture button
                 if capture_btn:
+                    capture_dir = ensure_dir(get_absolute_path("captured_images"))
                     filepath = st.session_state.webcam_processor.capture_frame(
                         processed_frame,
-                        save_dir=get_absolute_path("captured_images")
+                        save_dir=str(capture_dir)
                     )
                     st.session_state.captured_images.append(filepath)
                     st.success(f"📸 Đã chụp: {os.path.basename(filepath)}")
@@ -571,8 +792,9 @@ with tab4:
                 
                 # Handle recording buttons
                 if 'record_btn' in locals() and record_btn:
+                    record_dir = ensure_dir(get_absolute_path("recorded_videos"))
                     if st.session_state.webcam_processor.start_recording(
-                        output_dir=get_absolute_path("recorded_videos")
+                        output_dir=str(record_dir)
                     ):
                         st.session_state.is_recording = True
                         st.success("🔴 Đang ghi video...")
@@ -594,7 +816,7 @@ with tab4:
                     cv2.putText(processed_frame_rgb, "REC", (50, 40), 
                                cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 0, 0), 2)
                 
-                video_placeholder.image(processed_frame_rgb, channels="RGB", use_column_width=True)
+                video_placeholder.image(processed_frame_rgb, channels="RGB", width="stretch")
                 
                 # Display detected signs and play alerts
                 with detected_list_placeholder.container():
@@ -622,8 +844,16 @@ with tab4:
                     elapsed_time = time.time() - start_time
                     fps = frame_count / elapsed_time
                     fps_placeholder.metric("FPS", f"{fps:.1f}")
+                    
+                    # Hiển thị performance stats
+                    perf_stats = st.session_state.webcam_processor.get_performance_stats()
+                    with perf_placeholder.container():
+                        st.caption("⚡ **Hiệu năng**")
+                        st.text(f"Skip: {perf_stats['skip_frames']} frames")
+                        st.text(f"Size: {perf_stats['inference_size']}px")
+                        st.text(f"Rate: {perf_stats['inference_rate']}")
                 
-                time.sleep(0.03)  # Reduce CPU usage
+                time.sleep(0.01)  # Reduce CPU usage (giảm từ 0.03 xuống 0.01)
                 
         except Exception as e:
             st.error(f"❌ Lỗi khi xử lý webcam: {str(e)}")
@@ -642,7 +872,7 @@ with tab4:
         for idx, img_path in enumerate(st.session_state.captured_images[-8:]):  # Show last 8
             with cols[idx % 4]:
                 if os.path.exists(img_path):
-                    st.image(img_path, caption=os.path.basename(img_path), use_column_width=True)
+                    st.image(img_path, caption=os.path.basename(img_path), width="stretch")
 
 # Footer
 st.markdown("---")

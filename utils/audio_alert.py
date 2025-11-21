@@ -1,18 +1,38 @@
 import threading
 import time
+import sys
+import os
+
+# Cross-platform audio support
 try:
     import winsound  # Windows only
     WINDOWS_AUDIO = True
 except ImportError:
     WINDOWS_AUDIO = False
 
+# Try to import pygame for cross-platform audio (optional)
+try:
+    import pygame
+    PYGAME_AUDIO = True
+except ImportError:
+    PYGAME_AUDIO = False
+
 class AudioAlert:
     """Phát cảnh báo âm thanh khi phát hiện biển báo"""
     
-    def __init__(self):
-        self.enabled = True
+    def __init__(self, enabled=True):
+        self.enabled = enabled
+        self._audio_available = WINDOWS_AUDIO or PYGAME_AUDIO
         self.last_alert_time = {}
         self.alert_cooldown = 3  # Giây - tránh spam âm thanh
+        
+        # Initialize pygame mixer if available (for cross-platform)
+        if PYGAME_AUDIO and not WINDOWS_AUDIO:
+            try:
+                pygame.mixer.init(frequency=22050, size=-16, channels=2, buffer=512)
+            except Exception as e:
+                print(f"⚠️  Could not initialize pygame audio: {e}")
+                self._audio_available = False
         
         # Định nghĩa các biển báo quan trọng cần cảnh báo
         self.critical_signs = {
@@ -99,33 +119,82 @@ class AudioAlert:
         thread.start()
     
     def _play_sound_thread(self, level):
-        """Thread để phát âm thanh"""
-        if not WINDOWS_AUDIO:
-            print(f"\a")  # Fallback: system beep
+        """Thread để phát âm thanh (cross-platform)"""
+        if not self._audio_available:
+            # Fallback: system beep (works on most terminals)
+            try:
+                print(f"\a", end='', flush=True)
+            except:
+                pass
             return
         
         try:
             frequency, duration = self.alert_sounds.get(level, self.alert_sounds['info'])
             
-            # Phát âm thanh
-            if level == 'critical':
-                # Âm thanh nguy hiểm: 2 tiếng beep nhanh
-                winsound.Beep(frequency, duration)
-                time.sleep(0.05)
-                winsound.Beep(frequency, duration)
-            elif level == 'warning':
-                # Âm thanh cảnh báo: 1 tiếng beep
-                winsound.Beep(frequency, duration)
+            if WINDOWS_AUDIO:
+                # Windows winsound
+                if level == 'critical':
+                    # Âm thanh nguy hiểm: 2 tiếng beep nhanh
+                    winsound.Beep(frequency, duration)
+                    time.sleep(0.05)
+                    winsound.Beep(frequency, duration)
+                elif level == 'warning':
+                    # Âm thanh cảnh báo: 1 tiếng beep
+                    winsound.Beep(frequency, duration)
+                else:
+                    # Âm thanh thông tin: beep ngắn
+                    winsound.Beep(frequency, duration)
+            elif PYGAME_AUDIO:
+                # Cross-platform pygame (generate beep programmatically)
+                self._play_beep_pygame(frequency, duration, level)
             else:
-                # Âm thanh thông tin: beep ngắn
-                winsound.Beep(frequency, duration)
+                # Final fallback
+                print(f"\a", end='', flush=True)
                 
         except Exception as e:
-            print(f"Không thể phát âm thanh: {e}")
+            # Silently fail if audio disabled or error occurs
+            pass
+    
+    def _play_beep_pygame(self, frequency, duration, level):
+        """Generate and play beep using pygame (cross-platform)"""
+        try:
+            import numpy as np
+            sample_rate = 22050
+            duration_sec = duration / 1000.0
+            
+            # Generate sine wave
+            t = np.linspace(0, duration_sec, int(sample_rate * duration_sec))
+            wave = np.sin(2 * np.pi * frequency * t)
+            
+            # Apply envelope to avoid clicks
+            envelope = np.ones_like(wave)
+            fade_samples = int(0.01 * sample_rate)  # 10ms fade
+            envelope[:fade_samples] = np.linspace(0, 1, fade_samples)
+            envelope[-fade_samples:] = np.linspace(1, 0, fade_samples)
+            wave = wave * envelope
+            
+            # Convert to 16-bit
+            wave = (wave * 32767).astype(np.int16)
+            
+            # Create stereo
+            stereo_wave = np.column_stack((wave, wave))
+            
+            # Play sound
+            sound = pygame.sndarray.make_sound(stereo_wave)
+            sound.play()
+            
+            if level == 'critical':
+                time.sleep(0.05)
+                sound.play()
+            
+            time.sleep(duration_sec)
+        except Exception:
+            # Fallback if numpy not available or error
+            print(f"\a", end='', flush=True)
     
     def play_success_sound(self):
         """Phát âm thanh thành công (ví dụ: sau khi lưu ảnh)"""
-        if not WINDOWS_AUDIO:
+        if not self.enabled or not self._audio_available:
             return
         
         thread = threading.Thread(
@@ -137,12 +206,22 @@ class AudioAlert:
     def _play_success_thread(self):
         """Thread phát âm thanh thành công"""
         try:
-            # Âm thanh vui: tăng dần
-            winsound.Beep(523, 100)  # C
-            time.sleep(0.05)
-            winsound.Beep(659, 100)  # E
-            time.sleep(0.05)
-            winsound.Beep(784, 150)  # G
+            if WINDOWS_AUDIO:
+                # Âm thanh vui: tăng dần
+                winsound.Beep(523, 100)  # C
+                time.sleep(0.05)
+                winsound.Beep(659, 100)  # E
+                time.sleep(0.05)
+                winsound.Beep(784, 150)  # G
+            elif PYGAME_AUDIO:
+                # Use pygame for success sound
+                self._play_beep_pygame(523, 100, 'info')
+                time.sleep(0.05)
+                self._play_beep_pygame(659, 100, 'info')
+                time.sleep(0.05)
+                self._play_beep_pygame(784, 150, 'info')
+            else:
+                print(f"\a", end='', flush=True)
         except:
             pass
     
@@ -171,4 +250,16 @@ class AudioAlert:
     def clear_history(self):
         """Xóa lịch sử cảnh báo (reset cooldown)"""
         self.last_alert_time = {}
-
+    
+    def is_available(self):
+        """Check if audio is available on this system"""
+        return self._audio_available
+    
+    def get_audio_backend(self):
+        """Get current audio backend"""
+        if WINDOWS_AUDIO:
+            return "winsound (Windows)"
+        elif PYGAME_AUDIO:
+            return "pygame (cross-platform)"
+        else:
+            return "system beep (fallback)"

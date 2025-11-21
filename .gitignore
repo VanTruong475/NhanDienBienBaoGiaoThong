@@ -47,3 +47,27 @@ output/
 dist/
 build/
 *.egg-info/
+cat <<'EOF' > .gitignore
+# Virtual environment
+venv/
+
+# Datasets & backups
+data/train/
+data/valid/
+data/test/
+datasets/
+
+# Artifacts & temporary files
+captured_images/
+recorded_videos/
+output/
+temp/
+runs/
+
+# Large binaries
+*.pt
+*.mp4
+*.jpg
+*.jpeg
+*.png
+EOF

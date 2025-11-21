@@ -2,19 +2,15 @@ import cv2
 import numpy as np
 from ultralytics import YOLO
 import threading
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw
 import os
 from datetime import datetime
+from utils.model_cache import get_optimized_model, get_inference_config
+from utils.font_utils import get_cached_font
 
 def get_font(font_size=24):
-    arial_path = r'C:\Windows\Fonts\arial.ttf'
-    times_path = r'C:\Windows\Fonts\times.ttf'
-    if os.path.exists(arial_path):
-        return ImageFont.truetype(arial_path, font_size)
-    elif os.path.exists(times_path):
-        return ImageFont.truetype(times_path, font_size)
-    else:
-        return ImageFont.load_default()
+    """Get cross-platform font"""
+    return get_cached_font(font_size)
 
 def draw_text_unicode(img, text, position, color=(255,255,255), font_size=20):
     """Vẽ text Unicode lên ảnh"""
@@ -50,7 +46,8 @@ def draw_text_unicode(img, text, position, color=(255,255,255), font_size=20):
 
 
 class WebcamProcessor:
-    def __init__(self, model_path, class_names, class_names_full, conf_threshold=0.5):
+    def __init__(self, model_path, class_names, class_names_full, conf_threshold=0.5, 
+                 skip_frames=2, inference_size=640):
         """
         Khởi tạo xử lý webcam
         
@@ -59,13 +56,23 @@ class WebcamProcessor:
             class_names: Danh sách tên class
             class_names_full: Dictionary ánh xạ mã -> tên đầy đủ
             conf_threshold: Ngưỡng confidence
+            skip_frames: Số frames bỏ qua giữa mỗi lần inference (mặc định 2)
+            inference_size: Kích thước ảnh cho inference (mặc định 640)
         """
-        self.model = YOLO(model_path)
+        # Use cached and optimized model
+        self.model = get_optimized_model(model_path)
+        self.inference_config = get_inference_config()
         self.class_names = class_names
         self.class_names_full = class_names_full
         self.conf_threshold = conf_threshold
         self.stop_flag = threading.Event()
         self.cap = None
+        
+        # Performance optimization
+        self.skip_frames = skip_frames
+        self.inference_size = inference_size
+        self.frame_count = 0
+        self.last_detections = []  # Cache kết quả detection cuối cùng
         
         # Recording
         self.is_recording = False
@@ -74,6 +81,9 @@ class WebcamProcessor:
         
         # Capture
         self.captured_frames = []
+        
+        # Cache font để không load lại mỗi lần
+        self._font_cache = {}
         
         # Màu sắc cho bounding box
         self.colors = [
@@ -88,11 +98,24 @@ class WebcamProcessor:
     
     def start(self, camera_id=0):
         """Bắt đầu capture từ webcam"""
-        self.cap = cv2.VideoCapture(camera_id)
-        if not self.cap.isOpened():
-            raise ValueError(f"Không thể mở webcam {camera_id}")
-        self.stop_flag.clear()
-        return True
+        try:
+            self.cap = cv2.VideoCapture(camera_id)
+            if not self.cap.isOpened():
+                raise ValueError(f"Không thể mở webcam {camera_id}")
+            
+            # Kiểm tra có đọc được frame không
+            ret, test_frame = self.cap.read()
+            if not ret:
+                self.cap.release()
+                raise ValueError(f"Không thể đọc frame từ webcam {camera_id}")
+            
+            self.stop_flag.clear()
+            return True
+        except Exception as e:
+            if self.cap is not None:
+                self.cap.release()
+                self.cap = None
+            raise e
     
     def process_frame(self, frame):
         """
@@ -105,45 +128,96 @@ class WebcamProcessor:
             processed_frame: Frame đã được vẽ bounding box và label
             detected_signs: List các biển báo được phát hiện
         """
-        # Suy luận với YOLO
-        results = self.model(frame, conf=self.conf_threshold, verbose=False)
+        self.frame_count += 1
+        original_frame = frame.copy()
         
-        detected_signs = []
+        # Chỉ chạy inference mỗi N frames để tăng FPS
+        should_inference = (self.frame_count % (self.skip_frames + 1)) == 0
         
-        # Vẽ kết quả lên frame
-        for result in results:
-            for idx, box in enumerate(result.boxes):
-                # Lấy thông tin box
-                x1, y1, x2, y2 = map(int, box.xyxy[0].cpu().numpy())
-                conf = float(box.conf[0].cpu().numpy())
-                class_id = int(box.cls[0].cpu().numpy())
-                code = self.class_names[class_id]
-                
-                # Lưu thông tin biển báo phát hiện
-                detected_signs.append({
-                    'code': code,
-                    'name': self.class_names_full.get(code, code),
-                    'confidence': conf
-                })
-                
-                # Tạo label
-                if self.class_names_full and code in self.class_names_full:
-                    label = f"{code}: {self.class_names_full[code]} {conf:.2f}"
-                else:
-                    label = f"{code} {conf:.2f}"
-                
-                # Vẽ bounding box
-                color = self.colors[class_id % len(self.colors)]
-                cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
-                
-                # Vẽ label
-                label_y = y1 - 10
-                if label_y < 0:
-                    label_y = y2 + 20
+        if should_inference:
+            # Lấy kích thước gốc
+            original_h, original_w = frame.shape[:2]
+            
+            # Resize nhỏ hơn cho inference nếu ảnh quá lớn
+            if max(original_w, original_h) > self.inference_size:
+                scale = self.inference_size / max(original_w, original_h)
+                new_w = int(original_w * scale)
+                new_h = int(original_h * scale)
+                frame_resized = cv2.resize(frame, (new_w, new_h))
+            else:
+                frame_resized = frame
+                scale = 1.0
+            
+            # Suy luận với YOLO trên ảnh đã resize (with optimizations)
+            results = self.model(frame_resized, conf=self.conf_threshold, **self.inference_config)
+            
+            detected_signs = []
+            detection_boxes = []  # Lưu thông tin boxes để vẽ lại
+            
+            # Xử lý kết quả
+            for result in results:
+                for idx, box in enumerate(result.boxes):
+                    # Lấy thông tin box (scale về kích thước gốc)
+                    x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
+                    x1, y1, x2, y2 = int(x1/scale), int(y1/scale), int(x2/scale), int(y2/scale)
                     
-                frame = draw_text_unicode(frame, label, (x1, label_y), color=color, font_size=16)
+                    conf = float(box.conf[0].cpu().numpy())
+                    class_id = int(box.cls[0].cpu().numpy())
+                    
+                    # Kiểm tra class_id có hợp lệ không
+                    if class_id >= len(self.class_names):
+                        print(f"⚠️  Warning: class_id {class_id} vượt quá số lượng classes ({len(self.class_names)}). Bỏ qua detection này.")
+                        continue
+                    
+                    code = self.class_names[class_id]
+                    
+                    # Lưu thông tin biển báo phát hiện
+                    sign_info = {
+                        'code': code,
+                        'name': self.class_names_full.get(code, code),
+                        'confidence': conf
+                    }
+                    detected_signs.append(sign_info)
+                    
+                    # Lưu box info để vẽ lại cho các frame sau
+                    detection_boxes.append({
+                        'box': (x1, y1, x2, y2),
+                        'class_id': class_id,
+                        'code': code,
+                        'conf': conf,
+                        'label': f"{code}: {self.class_names_full.get(code, code)} {conf:.2f}"
+                    })
+            
+            # Cache kết quả
+            self.last_detections = detection_boxes
+        else:
+            # Sử dụng kết quả detection từ frame trước (không chạy inference)
+            detected_signs = [
+                {
+                    'code': det['code'],
+                    'name': self.class_names_full.get(det['code'], det['code']),
+                    'confidence': det['conf']
+                }
+                for det in self.last_detections
+            ]
         
-        return frame, detected_signs
+        # Vẽ bounding boxes (dù inference hay không)
+        for det in self.last_detections:
+            x1, y1, x2, y2 = det['box']
+            color = self.colors[det['class_id'] % len(self.colors)]
+            
+            # Vẽ bounding box
+            cv2.rectangle(original_frame, (x1, y1), (x2, y2), color, 2)
+            
+            # Vẽ label
+            label_y = y1 - 10
+            if label_y < 0:
+                label_y = y2 + 20
+            
+            original_frame = draw_text_unicode(original_frame, det['label'], (x1, label_y), 
+                                             color=color, font_size=16)
+        
+        return original_frame, detected_signs
     
     def read_frame(self):
         """Đọc frame từ webcam"""
@@ -249,9 +323,16 @@ class WebcamProcessor:
         
         self.is_recording = False
         
+        # Giải phóng video writer
         if self.video_writer is not None:
-            self.video_writer.release()
-            self.video_writer = None
+            try:
+                if self.video_writer.isOpened():
+                    self.video_writer.release()
+                    print("✅ Đã giải phóng video writer")
+            except Exception as e:
+                print(f"Lỗi khi giải phóng video writer: {e}")
+            finally:
+                self.video_writer = None
         
         path = self.recording_path
         self.recording_path = None
@@ -268,20 +349,66 @@ class WebcamProcessor:
     
     def stop(self):
         """Dừng capture webcam"""
-        # Dừng recording nếu đang record
-        if self.is_recording:
-            self.stop_recording()
-        
-        self.stop_flag.set()
-        if self.cap is not None:
-            self.cap.release()
-            self.cap = None
+        try:
+            # Dừng recording nếu đang record
+            if self.is_recording:
+                self.stop_recording()
+            
+            self.stop_flag.set()
+            
+            # Giải phóng capture
+            if self.cap is not None:
+                try:
+                    if self.cap.isOpened():
+                        self.cap.release()
+                        print("✅ Đã giải phóng webcam capture")
+                except Exception as e:
+                    print(f"Lỗi khi giải phóng webcam: {e}")
+                finally:
+                    self.cap = None
+        except Exception as e:
+            print(f"Lỗi khi dừng webcam: {e}")
     
     def is_stopped(self):
         """Kiểm tra đã dừng chưa"""
         return self.stop_flag.is_set()
     
+    def set_skip_frames(self, skip_frames):
+        """
+        Điều chỉnh số frames bỏ qua
+        
+        Args:
+            skip_frames: Số frames bỏ qua (0 = xử lý mọi frame, 1 = xử lý mỗi frame thứ 2, v.v.)
+        """
+        self.skip_frames = max(0, skip_frames)
+    
+    def set_inference_size(self, size):
+        """
+        Điều chỉnh kích thước inference
+        
+        Args:
+            size: Kích thước tối đa (320, 416, 640, 1280)
+        """
+        self.inference_size = size
+    
+    def get_performance_stats(self):
+        """
+        Lấy thông tin hiệu năng
+        
+        Returns:
+            dict: Thông tin về skip_frames, inference_size, frame_count
+        """
+        return {
+            'skip_frames': self.skip_frames,
+            'inference_size': self.inference_size,
+            'frame_count': self.frame_count,
+            'inference_rate': f"1/{self.skip_frames + 1} frames"
+        }
+    
     def __del__(self):
         """Cleanup khi object bị xóa"""
-        self.stop()
+        try:
+            self.stop()
+        except:
+            pass  # Ignore errors during cleanup
 
