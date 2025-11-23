@@ -570,8 +570,7 @@ with tab3:
                         label="⬇️ Tải xuống video",
                         data=video_bytes,
                         file_name=f"detected_{uploaded_video.name}",
-                        mime="video/mp4",
-                        width="stretch"
+                        mime="video/mp4"
                     )
             
             with result_col2:

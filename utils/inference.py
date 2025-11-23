@@ -57,6 +57,12 @@ def process_image(image_path, model_path, class_names, class_names_full, conf_th
     if img is None:
         raise ValueError(f"Không thể đọc ảnh từ {image_path}")
     
+    # Xử lý ảnh grayscale (trắng đen) - convert sang BGR nếu cần
+    if len(img.shape) == 2:  # Grayscale (1 channel)
+        img = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
+    elif img.shape[2] == 4:  # RGBA -> BGR
+        img = cv2.cvtColor(img, cv2.COLOR_RGBA2BGR)
+    
     # Run inference with optimized settings
     results = model(img, conf=conf_threshold, **inference_config)
     colors = [

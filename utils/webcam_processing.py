@@ -138,6 +138,12 @@ class WebcamProcessor:
             # Lấy kích thước gốc
             original_h, original_w = frame.shape[:2]
             
+            # Xử lý ảnh grayscale (trắng đen) - convert sang BGR nếu cần
+            if len(frame.shape) == 2:  # Grayscale (1 channel)
+                frame = cv2.cvtColor(frame, cv2.COLOR_GRAY2BGR)
+            elif frame.shape[2] == 4:  # RGBA -> BGR
+                frame = cv2.cvtColor(frame, cv2.COLOR_RGBA2BGR)
+            
             # Resize nhỏ hơn cho inference nếu ảnh quá lớn
             if max(original_w, original_h) > self.inference_size:
                 scale = self.inference_size / max(original_w, original_h)
